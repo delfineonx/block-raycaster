@@ -2,39 +2,41 @@
 // This product includes "Block Raycaster" created by delfineonx.
 // Licensed under the Apache License, Version 2.0 (the "License").
 
-BR = {
+globalThis.BR = {
   INFINITY: 1e48,
-  UNIT_ALPHA: 1e-3,
+
   default: {
     directionType: null,
     maxDistance: null,
     startOffset: null,
     cellSize: null,
   },
-  cache: [
-    [null, null],       //  0: result
-    [null, null, null], //  1: dirVec
-    [null, 1],          //  2: dirInvVecNorm
 
-    [null, 0],          //  3: directionType
-    [null, 6],          //  4: maxDistance
-    [null, 0],          //  5: startOffset
-    [null, 1],          //  6: cellSize
+  cache: [
+    null,  //  0: "temp value"
+    1,     //  1: directionType
+    null,  //  2: maxAbsDir
+    1,     //  3: cellSize
+    6,     //  4: maxDistance
+    null,  //  5: dirVecX / dirYaw
+    null,  //  6: dirVecY / dirPitch
+    null,  //  7: dirVecZ / undefined
+    0,     //  8: startOffset
+    null,  //  9: result
   ],
 
-  dispatcher: [
-    // angle direction to vector
-    {
+  dispatcher: {
+    converter: {
       // Range-reduction constants
       INV_PI_2:  0.6366197723675814,    // 2/pi
       PI_2_HI: 1.5707963267948966,      // high part of pi/2
-      PI_2_LO:  6.123233995736766e-17,  // low  part so HI+LO == pi/2 exactly
+      PI_2_LO:  6.123233995736766e-17,  // low part so HI+LO == pi/2 exactly
 
-      // Angle conversion
-      DEG_TO_RAD: 0.017453292519943295, // π/180
+      // Angle unit conversion constants
+      DEG_TO_RAD: 0.017453292519943295, // pi/180
+      RAD_TO_DEG: 57.29577951308232,    // 180/pi
 
       // Taylor series coefficients for |reducedAngle| <= pi/2
-
       // sin(r) = r − r^3/3! + r^5/5! − r^7/7! + r^9/9! − r^11/11! + r^13/13!
       SIN_C13: -1.6059043836821613e-10, // −1/13!
       SIN_C11:  2.5052108385441720e-08, // +1/11!
@@ -51,23 +53,37 @@ BR = {
       COS_C04:  4.1666666666666664e-02, // +1/4!
       COS_C02: -5.0000000000000000e-01, // −1/2!
 
-      // Pass-in buffer
-      direction: null, // [yaw, pitch] or [theta, phi]
+      // atan(a) = a - a^3/3 + a^5/5 - a^7/7 (Horner form)
+      ATAN_P7: -0.14285714285714285,    // -1/7
+      ATAN_P5:  0.2,                    // +1/5
+      ATAN_P3: -0.3333333333333333,     // -1/3
 
-      // input: [yawRad, pitchRad]
-      get 1() {
+      direction: null,
+
+      /*
+      2: 2 -> 1
+      3: 3 -> 1
+      4: 1 -> 2
+      5: 1 -> 3
+      6: 2 -> 3
+      7: 3 -> 2
+      */
+
+      // [yawRad, pitchRad] -> [dirX, dirY, dirZ]
+      get 2() {
         const yawRad = this.direction[0];
         const pitchRad = this.direction[1];
 
         let scaledAngle,
-          quarterTurns,
-          reducedAngle,
-          reducedAngle2,
-          s,
-          c,
-          quadrant,
-          shouldSwap,
-          signedFlip;
+            quarterTurns,
+            reducedAngle,
+            reducedAngle2,
+            poly,
+            sinReduced,
+            cosReduced,
+            quadrant,
+            shouldSwap,
+            signedFlip;
 
         // sincos(yawRad) -> (sinYaw, cosYaw)
         let sinYaw, cosYaw;
@@ -78,21 +94,21 @@ BR = {
           reducedAngle = (yawRad - quarterTurns * this.PI_2_HI) - quarterTurns * this.PI_2_LO;
           reducedAngle2  = reducedAngle * reducedAngle;
 
-          s = this.SIN_C13;
-          s = s * reducedAngle2 + this.SIN_C11;
-          s = s * reducedAngle2 + this.SIN_C09;
-          s = s * reducedAngle2 + this.SIN_C07;
-          s = s * reducedAngle2 + this.SIN_C05;
-          s = s * reducedAngle2 + this.SIN_C03;
-          const sinReduced = reducedAngle + reducedAngle * reducedAngle2 * (-s);
+          poly = this.SIN_C13;
+          poly = poly * reducedAngle2 + this.SIN_C11;
+          poly = poly * reducedAngle2 + this.SIN_C09;
+          poly = poly * reducedAngle2 + this.SIN_C07;
+          poly = poly * reducedAngle2 + this.SIN_C05;
+          poly = poly * reducedAngle2 + this.SIN_C03;
+          sinReduced = reducedAngle + reducedAngle * reducedAngle2 * (-poly);
 
-          c = this.COS_C12;
-          c = c * reducedAngle2 + this.COS_C10;
-          c = c * reducedAngle2 + this.COS_C08;
-          c = c * reducedAngle2 + this.COS_C06;
-          c = c * reducedAngle2 + this.COS_C04;
-          c = c * reducedAngle2 + this.COS_C02;
-          const cosReduced = 1 + c * reducedAngle2;
+          poly = this.COS_C12;
+          poly = poly * reducedAngle2 + this.COS_C10;
+          poly = poly * reducedAngle2 + this.COS_C08;
+          poly = poly * reducedAngle2 + this.COS_C06;
+          poly = poly * reducedAngle2 + this.COS_C04;
+          poly = poly * reducedAngle2 + this.COS_C02;
+          cosReduced = 1 + poly * reducedAngle2;
 
           quadrant = (quarterTurns & 3);
           shouldSwap = quadrant & 1;
@@ -111,21 +127,21 @@ BR = {
           reducedAngle = (pitchRad - quarterTurns * this.PI_2_HI) - quarterTurns * this.PI_2_LO;
           reducedAngle2 = reducedAngle * reducedAngle;
 
-          s = this.SIN_C13;
-          s = s * reducedAngle2 + this.SIN_C11;
-          s = s * reducedAngle2 + this.SIN_C09;
-          s = s * reducedAngle2 + this.SIN_C07;
-          s = s * reducedAngle2 + this.SIN_C05;
-          s = s * reducedAngle2 + this.SIN_C03;
-          const sinReduced = reducedAngle + reducedAngle * reducedAngle2 * (-s);
+          poly = this.SIN_C13;
+          poly = poly * reducedAngle2 + this.SIN_C11;
+          poly = poly * reducedAngle2 + this.SIN_C09;
+          poly = poly * reducedAngle2 + this.SIN_C07;
+          poly = poly * reducedAngle2 + this.SIN_C05;
+          poly = poly * reducedAngle2 + this.SIN_C03;
+          sinReduced = reducedAngle + reducedAngle * reducedAngle2 * (-poly);
 
-          c = this.COS_C12;
-          c = c * reducedAngle2 + this.COS_C10;
-          c = c * reducedAngle2 + this.COS_C08;
-          c = c * reducedAngle2 + this.COS_C06;
-          c = c * reducedAngle2 + this.COS_C04;
-          c = c * reducedAngle2 + this.COS_C02;
-          const cosReduced = 1 + c * reducedAngle2;
+          poly = this.COS_C12;
+          poly = poly * reducedAngle2 + this.COS_C10;
+          poly = poly * reducedAngle2 + this.COS_C08;
+          poly = poly * reducedAngle2 + this.COS_C06;
+          poly = poly * reducedAngle2 + this.COS_C04;
+          poly = poly * reducedAngle2 + this.COS_C02;
+          cosReduced = 1 + poly * reducedAngle2;
 
           quadrant = (quarterTurns & 3);
           shouldSwap = quadrant & 1;
@@ -135,28 +151,29 @@ BR = {
           cosPitch = (cosReduced * (1 - shouldSwap) + (-sinReduced) * shouldSwap) * signedFlip;
         }
 
-        const _dirVec_ = BR.cache[1];
-        _dirVec_[0] = -cosPitch * sinYaw;
-        _dirVec_[1] = sinPitch;
-        _dirVec_[2] = -cosPitch * cosYaw;
+        const cache = BR.cache;
+        cache[5] = -cosPitch * sinYaw;
+        cache[6] = sinPitch;
+        cache[7] = -cosPitch * cosYaw;
 
         this.direction = null;
       },
 
-      // input: [yawDeg, pitchDeg]
-      get 2() {
+      // [yawDeg, pitchDeg] -> [dirX, dirY, dirZ]
+      get 3() {
         const yawRad = this.direction[0] * this.DEG_TO_RAD;
         const pitchRad = this.direction[1] * this.DEG_TO_RAD;
 
         let scaledAngle,
-          quarterTurns,
-          reducedAngle,
-          reducedAngle2,
-          s,
-          c,
-          quadrant,
-          shouldSwap,
-          signedFlip;
+            quarterTurns,
+            reducedAngle,
+            reducedAngle2,
+            poly,
+            sinReduced,
+            cosReduced,
+            quadrant,
+            shouldSwap,
+            signedFlip;
 
         // sincos(yawRad) -> (sinYaw, cosYaw)
         let sinYaw, cosYaw;
@@ -167,21 +184,21 @@ BR = {
           reducedAngle = (yawRad - quarterTurns * this.PI_2_HI) - quarterTurns * this.PI_2_LO;
           reducedAngle2  = reducedAngle * reducedAngle;
 
-          s = this.SIN_C13;
-          s = s * reducedAngle2 + this.SIN_C11;
-          s = s * reducedAngle2 + this.SIN_C09;
-          s = s * reducedAngle2 + this.SIN_C07;
-          s = s * reducedAngle2 + this.SIN_C05;
-          s = s * reducedAngle2 + this.SIN_C03;
-          const sinReduced = reducedAngle + reducedAngle * reducedAngle2 * (-s);
+          poly = this.SIN_C13;
+          poly = poly * reducedAngle2 + this.SIN_C11;
+          poly = poly * reducedAngle2 + this.SIN_C09;
+          poly = poly * reducedAngle2 + this.SIN_C07;
+          poly = poly * reducedAngle2 + this.SIN_C05;
+          poly = poly * reducedAngle2 + this.SIN_C03;
+          sinReduced = reducedAngle + reducedAngle * reducedAngle2 * (-poly);
 
-          c = this.COS_C12;
-          c = c * reducedAngle2 + this.COS_C10;
-          c = c * reducedAngle2 + this.COS_C08;
-          c = c * reducedAngle2 + this.COS_C06;
-          c = c * reducedAngle2 + this.COS_C04;
-          c = c * reducedAngle2 + this.COS_C02;
-          const cosReduced = 1 + c * reducedAngle2;
+          poly = this.COS_C12;
+          poly = poly * reducedAngle2 + this.COS_C10;
+          poly = poly * reducedAngle2 + this.COS_C08;
+          poly = poly * reducedAngle2 + this.COS_C06;
+          poly = poly * reducedAngle2 + this.COS_C04;
+          poly = poly * reducedAngle2 + this.COS_C02;
+          cosReduced = 1 + poly * reducedAngle2;
 
           quadrant = (quarterTurns & 3);
           shouldSwap = quadrant & 1;
@@ -200,21 +217,21 @@ BR = {
           reducedAngle = (pitchRad - quarterTurns * this.PI_2_HI) - quarterTurns * this.PI_2_LO;
           reducedAngle2 = reducedAngle * reducedAngle;
 
-          s = this.SIN_C13;
-          s = s * reducedAngle2 + this.SIN_C11;
-          s = s * reducedAngle2 + this.SIN_C09;
-          s = s * reducedAngle2 + this.SIN_C07;
-          s = s * reducedAngle2 + this.SIN_C05;
-          s = s * reducedAngle2 + this.SIN_C03;
-          const sinReduced = reducedAngle + reducedAngle * reducedAngle2 * (-s);
+          poly = this.SIN_C13;
+          poly = poly * reducedAngle2 + this.SIN_C11;
+          poly = poly * reducedAngle2 + this.SIN_C09;
+          poly = poly * reducedAngle2 + this.SIN_C07;
+          poly = poly * reducedAngle2 + this.SIN_C05;
+          poly = poly * reducedAngle2 + this.SIN_C03;
+          sinReduced = reducedAngle + reducedAngle * reducedAngle2 * (-poly);
 
-          c = this.COS_C12;
-          c = c * reducedAngle2 + this.COS_C10;
-          c = c * reducedAngle2 + this.COS_C08;
-          c = c * reducedAngle2 + this.COS_C06;
-          c = c * reducedAngle2 + this.COS_C04;
-          c = c * reducedAngle2 + this.COS_C02;
-          const cosReduced = 1 + c * reducedAngle2;
+          poly = this.COS_C12;
+          poly = poly * reducedAngle2 + this.COS_C10;
+          poly = poly * reducedAngle2 + this.COS_C08;
+          poly = poly * reducedAngle2 + this.COS_C06;
+          poly = poly * reducedAngle2 + this.COS_C04;
+          poly = poly * reducedAngle2 + this.COS_C02;
+          cosReduced = 1 + poly * reducedAngle2;
 
           quadrant = (quarterTurns & 3);
           shouldSwap = quadrant & 1;
@@ -224,106 +241,299 @@ BR = {
           cosPitch = (cosReduced * (1 - shouldSwap) + (-sinReduced) * shouldSwap) * signedFlip;
         }
 
-        const _dirVec_ = BR.cache[1];
-        _dirVec_[0] = -cosPitch * sinYaw;
-        _dirVec_[1] = sinPitch;
-        _dirVec_[2] = -cosPitch * cosYaw;
+        const cache = BR.cache;
+        cache[5] = -cosPitch * sinYaw;
+        cache[6] = sinPitch;
+        cache[7] = -cosPitch * cosYaw;
 
         this.direction = null;
       },
-    },
 
-    // inverse vector norm
-    {
-      vecNormSquared: null,
+      // [dirX, dirY, dirZ] -> [yawRad, pitchRad]
+      get 4() {
+        const dirX = this.direction[5];
+        const dirY = this.direction[6];
+        const dirZ = this.direction[7];
 
-      get 1() {
-        const vecNormSquared = this.vecNormSquared;
-        const isVecNormZero = +(vecNormSquared === 0);
-        const needHalfFactor = +(vecNormSquared >= 2);
-        const needDoubleFactor = +(vecNormSquared < 0.5);
-        const scaleFactor = ((1 - needHalfFactor) + 0.5 * needHalfFactor) * ((1 - needDoubleFactor) + 2 * needDoubleFactor);
-        const scaledInvSqrtInput = vecNormSquared * scaleFactor * scaleFactor + isVecNormZero;
+        const PI_2 = this.PI_2_HI + this.PI_2_LO;
+        const PI = PI_2 + PI_2;
+
+        let baseX,
+            baseY,
+            absX,
+            absY,
+            isAbsYgreaterAbsX,
+            maxAbs,
+            minAbs,
+            ratio,
+            ratio2,
+            poly;
+
+        let yawRad;
+        // atan2(dirX, dirZ) -> yawRad
+        {
+          baseX = dirZ;
+          baseY = dirX;
+
+          absX = baseX * ((baseX > 0) - (baseX < 0));
+          absY = baseY * ((baseY > 0) - (baseY < 0));
+
+          // Ratio reduction
+          isAbsYgreaterAbsX = +(absY > absX);
+          maxAbs = absX + (absY - absX) * isAbsYgreaterAbsX;
+          minAbs = absY + (absX - absY) * isAbsYgreaterAbsX;
+          ratio = minAbs / (maxAbs + (maxAbs === 0));
+          ratio2 = ratio * ratio;
+
+          poly = this.ATAN_P7;
+          poly = poly * ratio2 + this.ATAN_P5;
+          poly = poly * ratio2 + this.ATAN_P3;
+          poly = (poly * ratio2 + 1) * ratio;  // = atan(ratio)
+
+          // Undo the reduction and fix quadrants
+          yawRad = poly * (1 - isAbsYgreaterAbsX) + (PI_2 - poly) * isAbsYgreaterAbsX;
+          yawRad = yawRad + (PI - 2 * yawRad) * (baseX < 0);
+          yawRad = yawRad * (1 - ((baseY < 0) << 1));
+        }
+
+        let pitchRad;
+        // atan2(dirY, sqrt(dirX^2 + dirZ^2)) -> pitchRad
+        {
+          const horizontalNormSquared = dirX * dirX + dirZ * dirZ;
+          const isHorizontalNormZero = +(horizontalNormSquared === 0);
+          const useHalfFactor = +(horizontalNormSquared >= 2);
+          const useDoubleFactor = +(horizontalNormSquared < 0.5);
+          const scaleFactor = ((1 - useHalfFactor) + 0.5 * useHalfFactor) * ((1 - useDoubleFactor) + 2 * useDoubleFactor);
+          const scaledInvSqrtInput = horizontalNormSquared * scaleFactor * scaleFactor + isHorizontalNormZero;
+          const deviation = scaledInvSqrtInput - 1;
+          let invSqrt = 1 - 0.5 * deviation + 0.375 * deviation * deviation;
+          invSqrt = invSqrt * (1.5 - 0.5 * scaledInvSqrtInput * invSqrt * invSqrt);
+          invSqrt = invSqrt * (1.5 - 0.5 * scaledInvSqrtInput * invSqrt * invSqrt);
+          const horizontalNorm = horizontalNormSquared * (scaleFactor * invSqrt) * (1 - isHorizontalNormZero);
+
+          baseX = horizontalNorm;
+          baseY = dirY;
+
+          absX = baseX * ((baseX > 0) - (baseX < 0));
+          absY = baseY * ((baseY > 0) - (baseY < 0));
+
+          isAbsYgreaterAbsX = +(absY > absX);
+          maxAbs = absX + (absY - absX) * isAbsYgreaterAbsX;
+          minAbs = absY + (absX - absY) * isAbsYgreaterAbsX;
+          ratio = minAbs / (maxAbs + (maxAbs === 0));
+          ratio2 = ratio * ratio;
+
+          poly = this.ATAN_P7;
+          poly = poly * ratio2 + this.ATAN_P5;
+          poly = poly * ratio2 + this.ATAN_P3;
+          poly = (poly * ratio2 + 1) * ratio;
+
+          pitchRad = poly * (1 - isAbsYgreaterAbsX) + (PI_2 - poly) * isAbsYgreaterAbsX;
+          pitchRad = pitchRad + (PI - 2 * pitchRad) * +(baseX < 0);
+          pitchRad = pitchRad * (1 - ((baseY < 0) << 1));
+        }
+
+        const cache = BR.cache;
+        cache[5] = yawRad;
+        cache[6] = pitchRad;
+
+        this.direction = null;
+      },
+
+      // [dirX, dirY, dirZ] -> [yawDeg, pitchDeg]
+      get 5() {
+        const dirX = this.direction[5];
+        const dirY = this.direction[6];
+        const dirZ = this.direction[7];
+
+        const PI_2 = this.PI_2_HI + this.PI_2_LO;
+        const PI = PI_2 + PI_2;
+
+        let baseX,
+            baseY,
+            absX,
+            absY,
+            isAbsYgreaterAbsX,
+            maxAbs,
+            minAbs,
+            ratio,
+            ratio2,
+            poly;
+
+        let yawRad;
+        // atan2(dirX, dirZ) -> yawRad
+        {
+          baseX = dirZ;
+          baseY = dirX;
+
+          absX = baseX * ((baseX > 0) - (baseX < 0));
+          absY = baseY * ((baseY > 0) - (baseY < 0));
+
+          isAbsYgreaterAbsX = +(absY > absX);
+          maxAbs = absX + (absY - absX) * isAbsYgreaterAbsX;
+          minAbs = absY + (absX - absY) * isAbsYgreaterAbsX;
+          ratio = minAbs / (maxAbs + (maxAbs === 0));
+          ratio2 = ratio * ratio;
+
+          poly = this.ATAN_P7;
+          poly = poly * ratio2 + this.ATAN_P5;
+          poly = poly * ratio2 + this.ATAN_P3;
+          poly = (poly * ratio2 + 1) * ratio;
+
+          yawRad = poly * (1 - isAbsYgreaterAbsX) + (PI_2 - poly) * isAbsYgreaterAbsX;
+          yawRad = yawRad + (PI - 2 * yawRad) * (baseX < 0);
+          yawRad = yawRad * (1 - ((baseY < 0) << 1));
+        }
+
+        let pitchRad;
+        // atan2(dirY, sqrt(dirX^2 + dirZ^2)) -> pitchRad
+        {
+          const horizontalNormSquared = dirX * dirX + dirZ * dirZ;
+          const isHorizontalNormZero = +(horizontalNormSquared === 0);
+          const useHalfFactor = +(horizontalNormSquared >= 2);
+          const useDoubleFactor = +(horizontalNormSquared < 0.5);
+          const scaleFactor = ((1 - useHalfFactor) + 0.5 * useHalfFactor) * ((1 - useDoubleFactor) + 2 * useDoubleFactor);
+          const scaledInvSqrtInput = horizontalNormSquared * scaleFactor * scaleFactor + isHorizontalNormZero;
+          const deviation = scaledInvSqrtInput - 1;
+          let invSqrt = 1 - 0.5 * deviation + 0.375 * deviation * deviation;
+          invSqrt = invSqrt * (1.5 - 0.5 * scaledInvSqrtInput * invSqrt * invSqrt);
+          invSqrt = invSqrt * (1.5 - 0.5 * scaledInvSqrtInput * invSqrt * invSqrt);
+          const horizontalNorm = horizontalNormSquared * (scaleFactor * invSqrt) * (1 - isHorizontalNormZero);
+
+          baseX = horizontalNorm;
+          baseY = dirY;
+
+          absX = baseX * ((baseX > 0) - (baseX < 0));
+          absY = baseY * ((baseY > 0) - (baseY < 0));
+
+          isAbsYgreaterAbsX = +(absY > absX);
+          maxAbs = absX + (absY - absX) * isAbsYgreaterAbsX;
+          minAbs = absY + (absX - absY) * isAbsYgreaterAbsX;
+          ratio = minAbs / (maxAbs + (maxAbs === 0));
+          ratio2 = ratio * ratio;
+
+          poly = this.ATAN_P7;
+          poly = poly * ratio2 + this.ATAN_P5;
+          poly = poly * ratio2 + this.ATAN_P3;
+          poly = (poly * ratio2 + 1) * ratio;
+
+          pitchRad = poly * (1 - isAbsYgreaterAbsX) + (PI_2 - poly) * isAbsYgreaterAbsX;
+          pitchRad = pitchRad + (PI - 2 * pitchRad) * +(baseX < 0);
+          pitchRad = pitchRad * (1 - ((baseY < 0) << 1));
+        }
+
+        const cache = BR.cache;
+        cache[5] = yawRad * this.RAD_TO_DEG;
+        cache[6] = pitchRad * this.RAD_TO_DEG;
+
+        this.direction = null;
+      },
+
+      // [yawRad, pitchRad] -> [yawDeg, pitchDeg]
+      get 6() {
+        const yawRad = this.direction[0];
+        const pitchRad = this.direction[1];
+
+        const cache = BR.cache;
+        cache[5] = yawRad * this.RAD_TO_DEG;
+        cache[6] = pitchRad * this.RAD_TO_DEG;
+
+        this.direction = null;
+      },
+
+      // [yawDeg, pitchDeg] -> [yawRad, pitchRad]
+      get 7() {
+        const yawDeg = this.direction[0];
+        const pitchDeg = this.direction[1];
+
+        const cache = BR.cache;
+        cache[5] = yawDeg * this.DEG_TO_RAD;
+        cache[6] = pitchDeg * this.DEG_TO_RAD;
+
+        this.direction = null;
+      },
+
+      // normalizer
+      get 8() {
+        const cache = BR.cache;
+        const dirVecNormSquared = cache[5] * cache[5] + cache[6] * cache[6] + cache[7] * cache[7];
+        const isVecNormZero = +(dirVecNormSquared === 0);
+        const useHalfFactor = +(dirVecNormSquared >= 2);
+        const useDoubleFactor = +(dirVecNormSquared < 0.5);
+        const scaleFactor = ((1 - useHalfFactor) + 0.5 * useHalfFactor) * ((1 - useDoubleFactor) + 2 * useDoubleFactor);
+        const scaledInvSqrtInput = dirVecNormSquared * scaleFactor * scaleFactor + isVecNormZero;
         const deviation = scaledInvSqrtInput - 1;
         let invSqrt = 1 - 0.5 * deviation + 0.375 * deviation * deviation;
         invSqrt = invSqrt * (1.5 - 0.5 * scaledInvSqrtInput * invSqrt * invSqrt);
         invSqrt = invSqrt * (1.5 - 0.5 * scaledInvSqrtInput * invSqrt * invSqrt);
-        const invVecNorm = scaleFactor * invSqrt * (1 - isVecNormZero);
-        this.vecNormSquared = null;
-        return invVecNorm;
+        const dirInvVecNorm = scaleFactor * invSqrt * (1 - isVecNormZero);
+        cache[5] *= dirInvVecNorm;
+        cache[6] *= dirInvVecNorm;
+        cache[7] *= dirInvVecNorm;
       },
     },
 
-    // idempotency
-    {
-      state: 1,
+    idempotence: {
+      state: 0,
       result: null,
 
-      input: [
-        null, //  0: dirX
-        null, //  1: dirY
-        null, //  2: dirZ
-        null, //  3: cell
-        null, //  4: maxDist
-        null, //  5: dirInvVecNorm
-        null, //  6: startOffsetDistance
-        null, //  7: startX
-        null, //  8: startY
-        null, //  9: startZ
-      ],
+      input: {
+        dirX: null,
+        dirY: null,
+        dirZ: null,
+        cell: null,
+        maxDist: null,
+        dirVecNormSquared: null,
+        dirInvVecNorm: null,
+        startOffsetDistance: null,
+        startX: null,
+        startY: null,
+        startZ: null,
+      },
 
-      layout: [
-        null, //  0: dirX
-        null, //  1: dirY
-        null, //  2: dirZ
-        null, //  3: startX (with offset)
-        null, //  4: startY (with offset)
-        null, //  5: startZ (with offset)
-        null, //  6: voxelX
-        null, //  7: voxelY
-        null, //  8: voxelZ
-        null, //  9: stepXSign
-        null, // 10: stepYSign
-        null, // 11: stepZSign
-        null, // 12: timeStrideX
-        null, // 13: timeStrideY
-        null, // 14: timeStrideZ
-        null, // 15: timeNextX
-        null, // 16: timeNextY
-        null, // 17: timeNextZ
-        null, // 18: dirInvVecNorm
-        null, // 19: startOffsetDistance
-        null, // 20: maxTime
-      ],
+      layout: {
+        dirX: null,
+        dirY: null,
+        dirZ: null,
+        startX: null,  // (includes start offset)
+        startY: null,  // (includes start offset)
+        startZ: null,  // (includes start offset)
+        voxelX: null,
+        voxelY: null,
+        voxelZ: null,
+        stepXSign: null,
+        stepYSign: null,
+        stepZSign: null,
+        timeStrideX: null,
+        timeStrideY: null,
+        timeStrideZ: null,
+        timeNextX: null,
+        timeNextY: null,
+        timeNextZ: null,
+        dirVecNormSquared: null,
+        dirInvVecNorm: null,
+        startOffsetDistance: null,
+        maxTime: null,
+      },
 
-      get 1() {
+      get 0() {
+        const cache = BR.cache;
         const input = this.input;
         const layout = this.layout;
 
-        const dirX = layout[0] = input[0];
-        const dirY = layout[1] = input[1];
-        const dirZ = layout[2] = input[2];
+        const dirX = layout.dirX = input.dirX;
+        const dirY = layout.dirY = input.dirY;
+        const dirZ = layout.dirZ = input.dirZ;
 
-        const cell = input[3];
+        const cell = input.cell;
 
-        const startX = layout[3] = input[7];
-        const startY = layout[4] = input[8];
-        const startZ = layout[5] = input[9];
+        const startX = layout.startX = input.startX;
+        const startY = layout.startY = input.startY;
+        const startZ = layout.startZ = input.startZ;
 
-        const startCellX = startX / cell;
-        const startCellY = startY / cell;
-        const startCellZ = startZ / cell;
-
-        let temp = startCellX | 0;
-        layout[6] = temp - (temp > startCellX);
-        temp = startCellY | 0;
-        layout[7] = temp - (temp > startCellY);
-        temp = startCellZ | 0;
-        layout[8] = temp - (temp > startCellZ);
-
-        const stepXSign = layout[9]  = (dirX > 0) - (dirX < 0);
-        const stepYSign = layout[10] = (dirY > 0) - (dirY < 0);
-        const stepZSign = layout[11] = (dirZ > 0) - (dirZ < 0);
+        const stepXSign = layout.stepXSign = (dirX > 0) - (dirX < 0);
+        const stepYSign = layout.stepYSign = (dirY > 0) - (dirY < 0);
+        const stepZSign = layout.stepZSign = (dirZ > 0) - (dirZ < 0);
 
         const absDirX = dirX * stepXSign;
         const absDirY = dirY * stepYSign;
@@ -333,62 +543,72 @@ BR = {
         const isZeroDirY = +(absDirY === 0);
         const isZeroDirZ = +(absDirZ === 0);
 
-        layout[12] = cell / (absDirX + isZeroDirX);
-        layout[13] = cell / (absDirY + isZeroDirY);
-        layout[14] = cell / (absDirZ + isZeroDirZ);
+        layout.timeStrideX = cell / (absDirX + isZeroDirX);
+        layout.timeStrideY = cell / (absDirY + isZeroDirY);
+        layout.timeStrideZ = cell / (absDirZ + isZeroDirZ);
 
-        let timeNextX = (((layout[6] + ((stepXSign + 1) >>> 1)) * cell - startX) * stepXSign) / (absDirX + isZeroDirX) + isZeroDirX * BR.INFINITY;
-        let timeNextY = (((layout[7] + ((stepYSign + 1) >>> 1)) * cell - startY) * stepYSign) / (absDirY + isZeroDirY) + isZeroDirY * BR.INFINITY;
-        let timeNextZ = (((layout[8] + ((stepZSign + 1) >>> 1)) * cell - startZ) * stepZSign) / (absDirZ + isZeroDirZ) + isZeroDirZ * BR.INFINITY;
+        const startCellX = startX / cell;
+        layout.voxelX = (startCellX | 0) - ((startCellX | 0) > startCellX);
+        const startCellY = startY / cell;
+        layout.voxelY = (startCellY | 0) - ((startCellY | 0) > startCellY);
+        const startCellZ = startZ / cell;
+        layout.voxelZ = (startCellZ | 0) - ((startCellZ | 0) > startCellZ);
 
-        const isAbsDirXlessY = +(absDirX < absDirY);
-        const maxAbsDirXY = absDirX * (1 - isAbsDirXlessY) + absDirY * isAbsDirXlessY;
-        const isMaxAbsDirXYlessZ = +(maxAbsDirXY < absDirZ);
-        const maxAbsDir = maxAbsDirXY * (1 - isMaxAbsDirXYlessZ) + absDirZ * isMaxAbsDirXYlessZ;
+        let timeNextX = (((layout.voxelX + ((stepXSign + 1) >>> 1)) * cell - startX) * stepXSign) / (absDirX + isZeroDirX) + isZeroDirX * BR.INFINITY;
+        let timeNextY = (((layout.voxelY + ((stepYSign + 1) >>> 1)) * cell - startY) * stepYSign) / (absDirY + isZeroDirY) + isZeroDirY * BR.INFINITY;
+        let timeNextZ = (((layout.voxelZ + ((stepZSign + 1) >>> 1)) * cell - startZ) * stepZSign) / (absDirZ + isZeroDirZ) + isZeroDirZ * BR.INFINITY;
+
+        cache[2] = absDirX;
+        cache[0] = absDirY;
+        cache[2] = cache[+(absDirX > absDirY) << 1];
+        cache[0] = absDirZ;
+        const maxAbsDir = cache[+(cache[2] > absDirZ) << 1];
+
         const timeEpsilon = cell / (maxAbsDir + (maxAbsDir === 0)) * 1e-9;
-        layout[15] = timeNextX += (timeNextX === 0) * timeEpsilon;
-        layout[16] = timeNextY += (timeNextY === 0) * timeEpsilon;
-        layout[17] = timeNextZ += (timeNextZ === 0) * timeEpsilon;
+        layout.timeNextX = timeNextX += (timeNextX === 0) * timeEpsilon;
+        layout.timeNextY = timeNextY += (timeNextY === 0) * timeEpsilon;
+        layout.timeNextZ = timeNextZ += (timeNextZ === 0) * timeEpsilon;
 
-        layout[18] = input[5];
-        layout[19] = input[6];
-        layout[20] = input[4] * layout[18] + timeEpsilon;
+        layout.dirVecNormSquared = input.dirVecNormSquared;
+        layout.dirInvVecNorm = input.dirInvVecNorm;
+        layout.startOffsetDistance = input.startOffsetDistance;
+        layout.maxTime = input.maxDist * layout.dirInvVecNorm + timeEpsilon;
 
-        this.state = 2;
+        this.state = 1;
         this[this.state];
       },
 
-      get 2() {
+      get 1() {
         const layout = this.layout;
 
-        const stepXSign = layout[9],
-          stepYSign = layout[10],
-          stepZSign = layout[11],
-          timeStrideX = layout[12],
-          timeStrideY = layout[13],
-          timeStrideZ = layout[14],
-          maxTime = layout[20];
+        const stepXSign = layout.stepXSign,
+              stepYSign = layout.stepYSign,
+              stepZSign = layout.stepZSign,
+              timeStrideX = layout.timeStrideX,
+              timeStrideY = layout.timeStrideY,
+              timeStrideZ = layout.timeStrideZ,
+              maxTime = layout.maxTime;
 
-        let voxelX = layout[6],
-          voxelY = layout[7],
-          voxelZ = layout[8],
-          timeNextX = layout[15],
-          timeNextY = layout[16],
-          timeNextZ = layout[17];
+        let voxelX = layout.voxelX,
+            voxelY = layout.voxelY,
+            voxelZ = layout.voxelZ,
+            timeNextX = layout.timeNextX,
+            timeNextY = layout.timeNextY,
+            timeNextZ = layout.timeNextZ;
 
         let pickX,
-          pickY,
-          pickZ,
-          timeHit,
-          blockId,
-          isWithin;
+            pickY,
+            pickZ,
+            timeHit,
+            blockId,
+            isWithin;
         while (true) {
-          layout[6] = voxelX;
-          layout[7] = voxelY;
-          layout[8] = voxelZ;
-          layout[15] = timeNextX;
-          layout[16] = timeNextY;
-          layout[17] = timeNextZ;
+          layout.voxelX = voxelX;
+          layout.voxelY = voxelY;
+          layout.voxelZ = voxelZ;
+          layout.timeNextX = timeNextX;
+          layout.timeNextY = timeNextY;
+          layout.timeNextZ = timeNextZ;
 
           pickX = (timeNextX < timeNextY) & (timeNextX < timeNextZ);
           pickY = (timeNextY <= timeNextZ) & (1 - pickX);
@@ -414,117 +634,117 @@ BR = {
         const normalY = -stepYSign * pickY;
         const normalZ = -stepZSign * pickZ;
 
-        const offsetDistance = timeHit / (layout[18] + (layout[18] === 0));
+        const timeHitSafe = timeHit * (1 - (layout.dirVecNormSquared === 0));
+        const offsetDistance = timeHitSafe * layout.dirVecNormSquared * layout.dirInvVecNorm;
 
-        const _result_ = BR.cache[0];
-        _result_[1] = {
+        const cache = BR.cache;
+        cache[0] = null;
+        cache[9] = {
           blockId,
           position: [voxelX, voxelY, voxelZ],
           normal: [normalX, normalY, normalZ],
           adjacent: [voxelX + normalX, voxelY + normalY, voxelZ + normalZ],
-          point: [layout[3] + layout[0] * timeHit, layout[4] + layout[1] * timeHit, layout[5] + layout[2] * timeHit],
-          distance: offsetDistance + layout[19],
+          point: [layout.startX + layout.dirX * timeHitSafe, layout.startY + layout.dirY * timeHitSafe, layout.startZ + layout.dirZ * timeHitSafe],
+          distance: offsetDistance + layout.startOffsetDistance,
           offsetDistance,
         };
-        this.result = _result_[!!blockId & isWithin];
-        _result_[1] = null;
-        this.state = 1;
+        this.result = cache[(!!blockId & isWithin) * 9];
+        cache[9] = null;
+
+        this.state = 0;
       },
     },
-  ],
+  },
 
-  iget(startPosition, direction, directionType, maxDistance, startOffset, cellSize) {
-    const dispatcher = BR.dispatcher;
+  iget(startPosition, direction, directionType, maxDistance, startOffset, cellSize, isIdempotent) {
     const cache = BR.cache;
-    const input = dispatcher[2].input;
+    const converter = BR.dispatcher.converter;
+    const idempotence = BR.dispatcher.idempotence;
 
-    const _dirVec_ = cache[1];
-    _dirVec_[0] = direction[0];
-    _dirVec_[1] = direction[1];
-    _dirVec_[2] = direction[2];
-    dispatcher[0].direction = direction;
-    cache[3][0] = directionType | 0;
-    dispatcher[0][cache[3][+!(directionType | 0)]];
-    const dirX = input[0] = _dirVec_[0];
-    const dirY = input[1] = _dirVec_[1];
-    const dirZ = input[2] = _dirVec_[2];
+    const input = idempotence.input;
 
-    cache[6][0] = cellSize | 0;
-    input[3] = cache[6][+!((cellSize | 0) > 0)];
+    cache[5] = direction[0];
+    cache[6] = direction[1];
+    cache[7] = direction[2];
+    converter.direction = direction;
+    const dirType = cache[0] = directionType | 0;
+    converter[cache[(dirType < 1) | (dirType > 3)]];
+    const dirX = input.dirX = cache[5];
+    const dirY = input.dirY = cache[6];
+    const dirZ = input.dirZ = cache[7];
 
-    cache[4][0] = maxDistance;
-    input[4] = cache[4][+!(maxDistance > 0)];
+    cache[0] = cellSize | 0;
+    input.cell = cache[+((cellSize | 0) <= 0) * 3];
 
-    const dirVecNormSquared = dirX * dirX + dirY * dirY + dirZ * dirZ;
-    const absDeltaUnitSquared = (dirVecNormSquared - 1) * (1 - (((dirVecNormSquared - 1) < 0) << 1));
-    const unitEpsilon = (2 * BR.UNIT_ALPHA * input[3]) / input[4];
-    const isUnitDirVec = (absDeltaUnitSquared <= unitEpsilon);
-    dispatcher[1].vecNormSquared = dirVecNormSquared;
-    cache[2][0] = dispatcher[1][+!isUnitDirVec];
-    input[5] = cache[2][+isUnitDirVec];
+    cache[0] = maxDistance;
+    input.maxDist = cache[(maxDistance <= 0) << 2];
 
-    cache[5][0] = startOffset;
-    input[6] = cache[5][(startOffset === undefined) | (startOffset === null)];
-    const startOffsetTime = input[6] * input[5];
+    const dirVecNormSquared = input.dirVecNormSquared = dirX * dirX + dirY * dirY + dirZ * dirZ;
+    const isVecNormZero = +(dirVecNormSquared === 0);
+    const useHalfFactor = +(dirVecNormSquared >= 2);
+    const useDoubleFactor = +(dirVecNormSquared < 0.5);
+    const scaleFactor = ((1 - useHalfFactor) + 0.5 * useHalfFactor) * ((1 - useDoubleFactor) + 2 * useDoubleFactor);
+    const scaledInvSqrtInput = dirVecNormSquared * scaleFactor * scaleFactor + isVecNormZero;
+    const deviation = scaledInvSqrtInput - 1;
+    let invSqrt = 1 - 0.5 * deviation + 0.375 * deviation * deviation;
+    invSqrt = invSqrt * (1.5 - 0.5 * scaledInvSqrtInput * invSqrt * invSqrt);
+    invSqrt = invSqrt * (1.5 - 0.5 * scaledInvSqrtInput * invSqrt * invSqrt);
+    input.dirInvVecNorm = scaleFactor * invSqrt * (1 - isVecNormZero);
 
-    input[7] = startPosition[0] + dirX * startOffsetTime;
-    input[8] = startPosition[1] + dirY * startOffsetTime;
-    input[9] = startPosition[2] + dirZ * startOffsetTime;
+    cache[0] = startOffset;
+    input.startOffsetDistance = cache[((startOffset === undefined) | (startOffset === null)) << 3];
+    const startOffsetTime = input.startOffsetDistance * input.dirInvVecNorm;
 
-    dispatcher[2][dispatcher[2].state];
+    input.startX = startPosition[0] + dirX * startOffsetTime;
+    input.startY = startPosition[1] + dirY * startOffsetTime;
+    input.startZ = startPosition[2] + dirZ * startOffsetTime;
 
-    const result = dispatcher[2].result;
-    dispatcher[2].result = null;
+    idempotence[idempotence.state * +(isIdempotent !== false)];
+
+    const result = idempotence.result;
+    idempotence.result = null;
     return result;
   },
 
   get(startPosition, direction, directionType, maxDistance, startOffset, cellSize) {
-    const dispatcher = BR.dispatcher;
     const cache = BR.cache;
+    const converter = BR.dispatcher.converter;
 
-    const _dirVec_ = cache[1];
-    _dirVec_[0] = direction[0];
-    _dirVec_[1] = direction[1];
-    _dirVec_[2] = direction[2];
-    dispatcher[0].direction = direction;
-    cache[3][0] = directionType | 0;
-    dispatcher[0][cache[3][+!(directionType | 0)]];
-    const dirX = _dirVec_[0];
-    const dirY = _dirVec_[1];
-    const dirZ = _dirVec_[2];
+    cache[5] = direction[0];
+    cache[6] = direction[1];
+    cache[7] = direction[2];
+    converter.direction = direction;
+    const dirType = cache[0] = directionType | 0;
+    converter[cache[(dirType < 1) | (dirType > 3)]];
+    const dirX = cache[5];
+    const dirY = cache[6];
+    const dirZ = cache[7];
 
-    cache[6][0] = cellSize | 0;
-    const cell = cache[6][+!((cellSize | 0) > 0)];
+    cache[0] = cellSize | 0;
+    const cell = cache[+((cellSize | 0) <= 0) * 3];
 
-    cache[4][0] = maxDistance;
-    const maxDist = cache[4][+!(maxDistance > 0)];
+    cache[0] = maxDistance;
+    const maxDist = cache[(maxDistance <= 0) << 2];
 
     const dirVecNormSquared = dirX * dirX + dirY * dirY + dirZ * dirZ;
-    const absDeltaUnitSquared = (dirVecNormSquared - 1) * (1 - (((dirVecNormSquared - 1) < 0) << 1));
-    const unitEpsilon = (2 * BR.UNIT_ALPHA * cell) / maxDist;
-    const isUnitDirVec = (absDeltaUnitSquared <= unitEpsilon);
-    dispatcher[1].vecNormSquared = dirVecNormSquared;
-    cache[2][0] = dispatcher[1][+!isUnitDirVec];
-    const dirInvVecNorm = cache[2][+isUnitDirVec];
+    const isVecNormZero = +(dirVecNormSquared === 0);
+    const useHalfFactor = +(dirVecNormSquared >= 2);
+    const useDoubleFactor = +(dirVecNormSquared < 0.5);
+    const scaleFactor = ((1 - useHalfFactor) + 0.5 * useHalfFactor) * ((1 - useDoubleFactor) + 2 * useDoubleFactor);
+    const scaledInvSqrtInput = dirVecNormSquared * scaleFactor * scaleFactor + isVecNormZero;
+    const deviation = scaledInvSqrtInput - 1;
+    let invSqrt = 1 - 0.5 * deviation + 0.375 * deviation * deviation;
+    invSqrt = invSqrt * (1.5 - 0.5 * scaledInvSqrtInput * invSqrt * invSqrt);
+    invSqrt = invSqrt * (1.5 - 0.5 * scaledInvSqrtInput * invSqrt * invSqrt);
+    const dirInvVecNorm = scaleFactor * invSqrt * (1 - isVecNormZero);
 
-    cache[5][0] = startOffset;
-    const startOffsetDistance = cache[5][(startOffset === undefined) | (startOffset === null)];
+    cache[0] = startOffset;
+    const startOffsetDistance = cache[((startOffset === undefined) | (startOffset === null)) << 3];
     const startOffsetTime = startOffsetDistance * dirInvVecNorm;
 
     const startX = startPosition[0] + dirX * startOffsetTime;
     const startY = startPosition[1] + dirY * startOffsetTime;
     const startZ = startPosition[2] + dirZ * startOffsetTime;
-
-    const startCellX = startX / cell;
-    const startCellY = startY / cell;
-    const startCellZ = startZ / cell;
-
-    let temp = startCellX | 0;
-    let voxelX = temp - (temp > startCellX);
-    temp = startCellY | 0;
-    let voxelY = temp - (temp > startCellY);
-    temp = startCellZ | 0;
-    let voxelZ = temp - (temp > startCellZ);
 
     const stepXSign = (dirX > 0) - (dirX < 0);
     const stepYSign = (dirY > 0) - (dirY < 0);
@@ -542,14 +762,23 @@ BR = {
     const timeStrideY = cell / (absDirY + isZeroDirY);
     const timeStrideZ = cell / (absDirZ + isZeroDirZ);
 
+    const startCellX = startX / cell;
+    let voxelX = (startCellX | 0) - ((startCellX | 0) > startCellX);
+    const startCellY = startY / cell;
+    let voxelY = (startCellY | 0) - ((startCellY | 0) > startCellY);
+    const startCellZ = startZ / cell;
+    let voxelZ = (startCellZ | 0) - ((startCellZ | 0) > startCellZ);
+
     let timeNextX = (((voxelX + ((stepXSign + 1) >>> 1)) * cell - startX) * stepXSign) / (absDirX + isZeroDirX) + isZeroDirX * BR.INFINITY;
     let timeNextY = (((voxelY + ((stepYSign + 1) >>> 1)) * cell - startY) * stepYSign) / (absDirY + isZeroDirY) + isZeroDirY * BR.INFINITY;
     let timeNextZ = (((voxelZ + ((stepZSign + 1) >>> 1)) * cell - startZ) * stepZSign) / (absDirZ + isZeroDirZ) + isZeroDirZ * BR.INFINITY;
 
-    const isAbsDirXlessY = +(absDirX < absDirY);
-    const maxAbsDirXY = absDirX * (1 - isAbsDirXlessY) + absDirY * isAbsDirXlessY;
-    const isMaxAbsDirXYlessZ = +(maxAbsDirXY < absDirZ);
-    const maxAbsDir = maxAbsDirXY * (1 - isMaxAbsDirXYlessZ) + absDirZ * isMaxAbsDirXYlessZ;
+    cache[2] = absDirX;
+    cache[0] = absDirY;
+    cache[2] = cache[+(absDirX > absDirY) << 1];
+    cache[0] = absDirZ;
+    const maxAbsDir = cache[+(cache[2] > absDirZ) << 1];
+
     const timeEpsilon = cell / (maxAbsDir + (maxAbsDir === 0)) * 1e-9;
     timeNextX += (timeNextX === 0) * timeEpsilon;
     timeNextY += (timeNextY === 0) * timeEpsilon;
@@ -588,71 +817,64 @@ BR = {
     const normalY = -stepYSign * pickY;
     const normalZ = -stepZSign * pickZ;
 
-    const offsetDistance = timeHit / (dirInvVecNorm + (dirInvVecNorm === 0));
+    const timeHitSafe = timeHit * (1 - isVecNormZero);
+    const offsetDistance = timeHitSafe * dirVecNormSquared * dirInvVecNorm;
 
-    const _result_ = cache[0];
-    _result_[1] = {
+    cache[0] = null;
+    cache[9] = {
       blockId,
       position: [voxelX, voxelY, voxelZ],
       normal: [normalX, normalY, normalZ],
       adjacent: [voxelX + normalX, voxelY + normalY, voxelZ + normalZ],
-      point: [startX + dirX * timeHit, startY + dirY * timeHit, startZ + dirZ * timeHit],
+      point: [startX + dirX * timeHitSafe, startY + dirY * timeHitSafe, startZ + dirZ * timeHitSafe],
       distance: offsetDistance + startOffsetDistance,
       offsetDistance,
     };
-    const result = _result_[!!blockId & isWithin];
-    _result_[1] = null;
+    const result = cache[(!!blockId & isWithin) * 9];
+    cache[9] = null;
 
     return result;
   },
 
   maxSteps(startPosition, direction, directionType, maxDistance, startOffset, cellSize) {
-    const dispatcher = BR.dispatcher;
     const cache = BR.cache;
+    const converter = BR.dispatcher.converter;
 
-    const _dirVec_ = cache[1];
-    _dirVec_[0] = direction[0];
-    _dirVec_[1] = direction[1];
-    _dirVec_[2] = direction[2];
-    dispatcher[0].direction = direction;
-    cache[3][0] = directionType | 0;
-    dispatcher[0][cache[3][+!(directionType | 0)]];
-    const dirX = _dirVec_[0];
-    const dirY = _dirVec_[1];
-    const dirZ = _dirVec_[2];
+    cache[5] = direction[0];
+    cache[6] = direction[1];
+    cache[7] = direction[2];
+    converter.direction = direction;
+    const dirType = cache[0] = directionType | 0;
+    converter[cache[(dirType < 1) | (dirType > 3)]];
+    const dirX = cache[5];
+    const dirY = cache[6];
+    const dirZ = cache[7];
 
-    cache[6][0] = cellSize | 0;
-    const cell = cache[6][+!((cellSize | 0) > 0)];
+    cache[0] = cellSize | 0;
+    const cell = cache[+((cellSize | 0) <= 0) * 3];
 
-    cache[4][0] = maxDistance;
-    const maxDist = cache[4][+!(maxDistance > 0)];
+    cache[0] = maxDistance;
+    const maxDist = cache[(maxDistance <= 0) << 2];
 
     const dirVecNormSquared = dirX * dirX + dirY * dirY + dirZ * dirZ;
-    const absDeltaUnitSquared = (dirVecNormSquared - 1) * (1 - (((dirVecNormSquared - 1) < 0) << 1));
-    const unitEpsilon = (2 * BR.UNIT_ALPHA * cell) / maxDist;
-    const isUnitDirVec = (absDeltaUnitSquared <= unitEpsilon);
-    dispatcher[1].vecNormSquared = dirVecNormSquared;
-    cache[2][0] = dispatcher[1][+!isUnitDirVec];
-    const dirInvVecNorm = cache[2][+isUnitDirVec];
+    const isVecNormZero = +(dirVecNormSquared === 0);
+    const useHalfFactor = +(dirVecNormSquared >= 2);
+    const useDoubleFactor = +(dirVecNormSquared < 0.5);
+    const scaleFactor = ((1 - useHalfFactor) + 0.5 * useHalfFactor) * ((1 - useDoubleFactor) + 2 * useDoubleFactor);
+    const scaledInvSqrtInput = dirVecNormSquared * scaleFactor * scaleFactor + isVecNormZero;
+    const deviation = scaledInvSqrtInput - 1;
+    let invSqrt = 1 - 0.5 * deviation + 0.375 * deviation * deviation;
+    invSqrt = invSqrt * (1.5 - 0.5 * scaledInvSqrtInput * invSqrt * invSqrt);
+    invSqrt = invSqrt * (1.5 - 0.5 * scaledInvSqrtInput * invSqrt * invSqrt);
+    const dirInvVecNorm = scaleFactor * invSqrt * (1 - isVecNormZero);
 
-    cache[5][0] = startOffset;
-    const startOffsetDistance = cache[5][(startOffset === undefined) | (startOffset === null)];
+    cache[0] = startOffset;
+    const startOffsetDistance = cache[((startOffset === undefined) | (startOffset === null)) << 3];
     const startOffsetTime = startOffsetDistance * dirInvVecNorm;
 
     const startX = startPosition[0] + dirX * startOffsetTime;
     const startY = startPosition[1] + dirY * startOffsetTime;
     const startZ = startPosition[2] + dirZ * startOffsetTime;
-
-    const startCellX = startX / cell;
-    const startCellY = startY / cell;
-    const startCellZ = startZ / cell;
-
-    let temp = startCellX | 0;
-    let voxelX = temp - (temp > startCellX);
-    temp = startCellY | 0;
-    let voxelY = temp - (temp > startCellY);
-    temp = startCellZ | 0;
-    let voxelZ = temp - (temp > startCellZ);
 
     const stepXSign = (dirX > 0) - (dirX < 0);
     const stepYSign = (dirY > 0) - (dirY < 0);
@@ -670,14 +892,23 @@ BR = {
     const timeStrideY = cell / (absDirY + isZeroDirY);
     const timeStrideZ = cell / (absDirZ + isZeroDirZ);
 
+    const startCellX = startX / cell;
+    let voxelX = (startCellX | 0) - ((startCellX | 0) > startCellX);
+    const startCellY = startY / cell;
+    let voxelY = (startCellY | 0) - ((startCellY | 0) > startCellY);
+    const startCellZ = startZ / cell;
+    let voxelZ = (startCellZ | 0) - ((startCellZ | 0) > startCellZ);
+
     let timeNextX = (((voxelX + ((stepXSign + 1) >>> 1)) * cell - startX) * stepXSign) / (absDirX + isZeroDirX) + isZeroDirX * BR.INFINITY;
     let timeNextY = (((voxelY + ((stepYSign + 1) >>> 1)) * cell - startY) * stepYSign) / (absDirY + isZeroDirY) + isZeroDirY * BR.INFINITY;
     let timeNextZ = (((voxelZ + ((stepZSign + 1) >>> 1)) * cell - startZ) * stepZSign) / (absDirZ + isZeroDirZ) + isZeroDirZ * BR.INFINITY;
 
-    const isAbsDirXlessY = +(absDirX < absDirY);
-    const maxAbsDirXY = absDirX * (1 - isAbsDirXlessY) + absDirY * isAbsDirXlessY;
-    const isMaxAbsDirXYlessZ = +(maxAbsDirXY < absDirZ);
-    const maxAbsDir = maxAbsDirXY * (1 - isMaxAbsDirXYlessZ) + absDirZ * isMaxAbsDirXYlessZ;
+    cache[2] = absDirX;
+    cache[0] = absDirY;
+    cache[2] = cache[+(absDirX > absDirY) << 1];
+    cache[0] = absDirZ;
+    const maxAbsDir = cache[+(cache[2] > absDirZ) << 1];
+
     const timeEpsilon = cell / (maxAbsDir + (maxAbsDir === 0)) * 1e-9;
     timeNextX += (timeNextX === 0) * timeEpsilon;
     timeNextY += (timeNextY === 0) * timeEpsilon;
@@ -685,94 +916,198 @@ BR = {
 
     const maxTime = maxDist * dirInvVecNorm + timeEpsilon;
 
-    let isFirstWithinMax,
-      axisSteps,
-      lastIncludedTime,
-      isLastBeyondMax;
+    let isFirstTimeWithinMax,
+        axisSteps,
+        lastTime,
+        isLastTimeBeyondMax;
 
     let steps = 0;
 
     {
-      isFirstWithinMax = +(timeNextX <= maxTime);
-      axisSteps = isFirstWithinMax * ((((maxTime - timeNextX) / timeStrideX) | 0) + 1);
-      lastIncludedTime = timeNextX + (axisSteps - isFirstWithinMax) * timeStrideX;
-      isLastBeyondMax = +(lastIncludedTime > maxTime);
-      axisSteps -= isLastBeyondMax;
-      lastIncludedTime -= (isLastBeyondMax * timeStrideX);
-      axisSteps += ((lastIncludedTime + timeStrideX) <= maxTime);
+      isFirstTimeWithinMax = +(timeNextX <= maxTime);
+      axisSteps = isFirstTimeWithinMax * ((((maxTime - timeNextX) / timeStrideX) | 0) + 1);
+      lastTime = timeNextX + (axisSteps - isFirstTimeWithinMax) * timeStrideX;
+      isLastTimeBeyondMax = +(lastTime > maxTime);
+      axisSteps -= isLastTimeBeyondMax;
+      lastTime -= (isLastTimeBeyondMax * timeStrideX);
+      axisSteps += ((lastTime + timeStrideX) <= maxTime);
       axisSteps *= (absDirX !== 0);
       steps += axisSteps;
     }
 
     {
-      isFirstWithinMax = +(timeNextY <= maxTime);
-      axisSteps = isFirstWithinMax * ((((maxTime - timeNextY) / timeStrideY) | 0) + 1);
-      lastIncludedTime = timeNextY + (axisSteps - isFirstWithinMax) * timeStrideY;
-      isLastBeyondMax = +(lastIncludedTime > maxTime);
-      axisSteps -= isLastBeyondMax;
-      lastIncludedTime -= (isLastBeyondMax * timeStrideY);
-      axisSteps += ((lastIncludedTime + timeStrideY) <= maxTime);
+      isFirstTimeWithinMax = +(timeNextY <= maxTime);
+      axisSteps = isFirstTimeWithinMax * ((((maxTime - timeNextY) / timeStrideY) | 0) + 1);
+      lastTime = timeNextY + (axisSteps - isFirstTimeWithinMax) * timeStrideY;
+      isLastTimeBeyondMax = +(lastTime > maxTime);
+      axisSteps -= isLastTimeBeyondMax;
+      lastTime -= (isLastTimeBeyondMax * timeStrideY);
+      axisSteps += ((lastTime + timeStrideY) <= maxTime);
       axisSteps *= +(absDirY !== 0);
       steps += axisSteps;
     }
 
     {
-      isFirstWithinMax = +(timeNextZ <= maxTime);
-      axisSteps = isFirstWithinMax * ((((maxTime - timeNextZ) / timeStrideZ) | 0) + 1);
-      lastIncludedTime = timeNextZ + (axisSteps - isFirstWithinMax) * timeStrideZ;
-      isLastBeyondMax = +(lastIncludedTime > maxTime);
-      axisSteps -= isLastBeyondMax;
-      lastIncludedTime -= (isLastBeyondMax * timeStrideZ);
-      axisSteps += ((lastIncludedTime + timeStrideZ) <= maxTime);
+      isFirstTimeWithinMax = +(timeNextZ <= maxTime);
+      axisSteps = isFirstTimeWithinMax * ((((maxTime - timeNextZ) / timeStrideZ) | 0) + 1);
+      lastTime = timeNextZ + (axisSteps - isFirstTimeWithinMax) * timeStrideZ;
+      isLastTimeBeyondMax = +(lastTime > maxTime);
+      axisSteps -= isLastTimeBeyondMax;
+      lastTime -= (isLastTimeBeyondMax * timeStrideZ);
+      axisSteps += ((lastTime + timeStrideZ) <= maxTime);
       axisSteps *= +(absDirZ !== 0);
       steps += axisSteps;
     }
 
     return steps;
   },
+
+  startOffsetPosition(startPosition, direction, directionType, startOffset) {
+    const cache = BR.cache;
+    const converter = BR.dispatcher.converter;
+
+    cache[5] = direction[0];
+    cache[6] = direction[1];
+    cache[7] = direction[2];
+    converter.direction = direction;
+    const dirType = cache[0] = directionType | 0;
+    converter[cache[(dirType < 1) | (dirType > 3)]];
+    const dirX = cache[5];
+    const dirY = cache[6];
+    const dirZ = cache[7];
+
+    const dirVecNormSquared = dirX * dirX + dirY * dirY + dirZ * dirZ;
+    const isVecNormZero = +(dirVecNormSquared === 0);
+    const useHalfFactor = +(dirVecNormSquared >= 2);
+    const useDoubleFactor = +(dirVecNormSquared < 0.5);
+    const scaleFactor = ((1 - useHalfFactor) + 0.5 * useHalfFactor) * ((1 - useDoubleFactor) + 2 * useDoubleFactor);
+    const scaledInvSqrtInput = dirVecNormSquared * scaleFactor * scaleFactor + isVecNormZero;
+    const deviation = scaledInvSqrtInput - 1;
+    let invSqrt = 1 - 0.5 * deviation + 0.375 * deviation * deviation;
+    invSqrt = invSqrt * (1.5 - 0.5 * scaledInvSqrtInput * invSqrt * invSqrt);
+    invSqrt = invSqrt * (1.5 - 0.5 * scaledInvSqrtInput * invSqrt * invSqrt);
+    const dirInvVecNorm = scaleFactor * invSqrt * (1 - isVecNormZero);
+
+    cache[0] = startOffset;
+    const startOffsetDistance = cache[((startOffset === undefined) | (startOffset === null)) << 3];
+    const startOffsetTime = startOffsetDistance * dirInvVecNorm;
+
+    return [
+      startPosition[0] + dirX * startOffsetTime,
+      startPosition[1] + dirY * startOffsetTime,
+      startPosition[2] + dirZ * startOffsetTime,
+    ];
+  },
+
+  maxDistancePosition(startPosition, direction, directionType, maxDistance, startOffset) {
+    const cache = BR.cache;
+    const converter = BR.dispatcher.converter;
+
+    cache[5] = direction[0];
+    cache[6] = direction[1];
+    cache[7] = direction[2];
+    converter.direction = direction;
+    const dirType = cache[0] = directionType | 0;
+    converter[cache[(dirType < 1) | (dirType > 3)]];
+    const dirX = cache[5];
+    const dirY = cache[6];
+    const dirZ = cache[7];
+
+    cache[0] = maxDistance;
+    const maxDist = cache[(maxDistance <= 0) << 2];
+
+    const dirVecNormSquared = dirX * dirX + dirY * dirY + dirZ * dirZ;
+    const isVecNormZero = +(dirVecNormSquared === 0);
+    const useHalfFactor = +(dirVecNormSquared >= 2);
+    const useDoubleFactor = +(dirVecNormSquared < 0.5);
+    const scaleFactor = ((1 - useHalfFactor) + 0.5 * useHalfFactor) * ((1 - useDoubleFactor) + 2 * useDoubleFactor);
+    const scaledInvSqrtInput = dirVecNormSquared * scaleFactor * scaleFactor + isVecNormZero;
+    const deviation = scaledInvSqrtInput - 1;
+    let invSqrt = 1 - 0.5 * deviation + 0.375 * deviation * deviation;
+    invSqrt = invSqrt * (1.5 - 0.5 * scaledInvSqrtInput * invSqrt * invSqrt);
+    invSqrt = invSqrt * (1.5 - 0.5 * scaledInvSqrtInput * invSqrt * invSqrt);
+    const dirInvVecNorm = scaleFactor * invSqrt * (1 - isVecNormZero);
+
+    cache[0] = startOffset;
+    const startOffsetDistance = cache[((startOffset === undefined) | (startOffset === null)) << 3];
+
+    const maxTime = (startOffsetDistance + maxDist) * dirInvVecNorm;
+
+    return [
+      startPosition[0] + dirX * maxTime,
+      startPosition[1] + dirY * maxTime,
+      startPosition[2] + dirZ * maxTime,
+    ];
+  },
+
+  convertDirection(direction, fromType, toType) {
+    const cache = BR.cache;
+    const converter = BR.dispatcher.converter;
+
+    cache[5] = direction[0];
+    cache[6] = direction[1];
+    cache[7] = direction[2];
+    converter.direction = direction;
+
+    let fromDirType = cache[0] = fromType | 0;
+    fromDirType = cache[(fromDirType < 1) | (fromDirType > 3)];
+    let toDirType = cache[0] = toType | 0;
+    toDirType = cache[(toDirType < 1) | (toDirType > 3)];
+
+    converter[(fromDirType !== toDirType) * (fromDirType + (fromDirType === 1) * (toDirType + 1) + 4 * ((fromDirType ^ toDirType) === 1))];
+    converter[((fromDirType === 1) & (toDirType === 1)) << 3];
+
+    cache[0] = [cache[5], cache[6]];
+    cache[9] = [cache[5], cache[6], cache[7]];
+    const result = cache[(toDirType === 1) * 9];
+    cache[0] = cache[9] = null;
+
+    return result;
+  },
 };
 
-const BRdefault = BR.default;
-const BRcache = BR.cache;
-Object.defineProperty(BRdefault, "directionType", {
-  configurable: true,
-  get: () => {
-    return BRcache[3][1];
-  },
-  set: (value) => {
-    BRcache[3][1] = value;
-  },
-});
-Object.defineProperty(BRdefault, "maxDistance", {
-  configurable: true,
-  get: () => {
-    return BRcache[4][1];
-  },
-  set: (value) => {
-    BRcache[4][1] = value;
-  },
-});
-Object.defineProperty(BRdefault, "startOffset", {
-  configurable: true,
-  get: () => {
-    return BRcache[5][1];
-  },
-  set: (value) => {
-    BRcache[5][1] = value;
-  },
-});
-Object.defineProperty(BRdefault, "cellSize", {
-  configurable: true,
-  get: () => {
-    return BRcache[6][1];
-  },
-  set: (value) => {
-    BRcache[6][1] = value;
-  },
-});
+{
+  const BRdefault = BR.default;
+  const BRcache = BR.cache;
+  Object.defineProperty(BRdefault, "directionType", {
+    configurable: true,
+    get: () => {
+      return BRcache[1];
+    },
+    set: (value) => {
+      BRcache[1] = value;
+    },
+  });
+  Object.defineProperty(BRdefault, "maxDistance", {
+    configurable: true,
+    get: () => {
+      return BRcache[4];
+    },
+    set: (value) => {
+      BRcache[4] = value;
+    },
+  });
+  Object.defineProperty(BRdefault, "startOffset", {
+    configurable: true,
+    get: () => {
+      return BRcache[8];
+    },
+    set: (value) => {
+      BRcache[8] = value;
+    },
+  });
+  Object.defineProperty(BRdefault, "cellSize", {
+    configurable: true,
+    get: () => {
+      return BRcache[3];
+    },
+    set: (value) => {
+      BRcache[3] = value;
+    },
+  });
+}
 
 Object.seal(BR);
-
 globalThis.BlockRaycaster = BR;
 
 void 0;
