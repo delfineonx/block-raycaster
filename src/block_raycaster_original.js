@@ -123,30 +123,6 @@
     };
   }
 
-  const convertDirection = (direction, fromType, toType) => {
-    let fromDirType = fromType | 0;
-    if ((fromDirType < 1) | (fromDirType > 3)) {
-      fromDirType = _default.directionType;
-    }
-    let toDirType = toType | 0;
-    if ((toDirType < 1) | (toDirType > 3)) {
-      toDirType = _default.directionType;
-    }
-
-    // load into shared registers
-    dirX = direction[0];
-    dirY = direction[1];
-    dirZ = direction[2];
-    Converter["" + fromDirType + toDirType];
-
-    if (toDirType === 1) {
-      return [dirX, dirY, dirZ];
-    } else {
-      // [yawRad, pitchRad] or [yawDeg, pitchDeg]
-      return [dirX, dirY];
-    }
-  };
-
   let cast = null;
   {
     const INFINITY = 1e9;
@@ -292,10 +268,7 @@
 
         const maxTime = _maxTime;
 
-        let pickX, pickY, pickZ;
-        let timeHit;
-        let blockId;
-        let inRange;
+        let pickX, pickY, pickZ, timeHit, blockId, inRange;
 
         do {
           _stepCount++;
@@ -367,7 +340,7 @@
     Converter[fromDirType + "1"];
 
     let offset = startOffset;
-    if (offset === undefined || offset === null) {
+    if ((offset === undefined) | (offset === null)) {
       offset = _default.startOffset;
     }
 
@@ -393,7 +366,7 @@
       maxDist = _default.maxDistance;
     }
     let offset = startOffset;
-    if (offset === undefined || offset === null) {
+    if ((offset === undefined) | (offset === null)) {
       offset = _default.startOffset;
     }
 
@@ -404,6 +377,30 @@
       startPosition[1] + dirY * maxTime,
       startPosition[2] + dirZ * maxTime,
     ];
+  };
+
+  const convertDirection = (direction, fromType, toType) => {
+    let fromDirType = fromType | 0;
+    if ((fromDirType < 1) | (fromDirType > 3)) {
+      fromDirType = _default.directionType;
+    }
+    let toDirType = toType | 0;
+    if ((toDirType < 1) | (toDirType > 3)) {
+      toDirType = _default.directionType;
+    }
+
+    // load into shared registers
+    dirX = direction[0];
+    dirY = direction[1];
+    dirZ = direction[2];
+    Converter["" + fromDirType + toDirType];
+
+    if (toDirType === 1) {
+      return [dirX, dirY, dirZ];
+    } else {
+      // [yawRad, pitchRad] or [yawDeg, pitchDeg]
+      return [dirX, dirY];
+    }
   };
 
   globalThis.BR = Object.seal({
